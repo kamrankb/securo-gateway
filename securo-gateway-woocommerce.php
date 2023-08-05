@@ -10,9 +10,9 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
     // vertical tab title
     $this->title = __( "Securo Gateway", 'cwoa-securo-gateway' );
     $this->icon = null;
-    $this->has_fields = true;
+    $this->has_fields = false;
     // support default form with credit card
-    $this->supports = array( 'default_credit_card_form' );
+    //$this->supports = array( 'default_credit_card_form' );
     // setting defines
     $this->init_form_fields();
     // load time variable setting
@@ -93,30 +93,21 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
                : 'https://api.securogate.com/api/v1/gateway/transaction/init';
     
     $token = $this->getAuthToken();
-    $cardNo = str_replace( array(' ', '-' ), '', $_POST['cwoa_securo_gateway-card-number'] );
-    $cardExpiry = str_replace( ' ', '', $_POST['cwoa_securo_gateway-card-expiry'] );
-    $cardExpiry = explode( '/', $_POST['cwoa_securo_gateway-card-expiry'] );
-    
-    $firstSix = mb_substr($cardNo, 0, 6);
-    $lastFour = mb_substr($cardNo, -4);
     
     $itemAmount = (int)$customer_order->order_total;
 
     $signature = strtoupper($this->merchant_id).';'
-                .$customer_order->get_order_number().';'
-                .$firstSix.';'
-                .$lastFour.';'
-                .$itemAmount.';'
+                .$customer_order->get_order_number().';;;'
+                .($itemAmount*100).';'
                 .'USD'.';'
                 .$this->terminal_key.';'
                 .strtoupper($customer_order->billing_email).';'
                 .strtoupper($customer_order->billing_first_name).';'
                 .strtoupper($customer_order->billing_last_name).';'
                 .$this->secret_key;
-    //SHA512(<merchant id>;<order id>;<binn>;<last 4>;<amount>;<currency>;<key>;<email>;<fname>;<lname>;<secret>)
+    //SHA512(<merchant id>;<order id>;<amount>;<currency>;<key>;<email>;<fname>;<lname>;<secret>)
     
     $signature = hash("sha512", $signature);
-    
     
     $payload = array (
       'StoreId' => $this->store_id,
@@ -124,7 +115,7 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
         'OrderId' => $customer_order->get_order_number(),
         'ServiceName' => 'Test service name 1',
         'OriginalCurrency' => 'USD',
-        'OriginalAmount' => $itemAmount,
+        'OriginalAmount' => $itemAmount*100,
         'TerminalKey' => $this->terminal_key,
       ),
       'PayerDetails' => array (
@@ -143,14 +134,14 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
         'State' => $customer_order->billing_state,
         'Country' => $customer_order->billing_country,
       ),
-      'CardDetails' => array (
+      /*'CardDetails' => array (
         'Number' => $cardNo,
         'CVV' => ( isset( $_POST['cwoa_securo_gateway-card-cvc'] ) ) ? $_POST['cwoa_securo_gateway-card-cvc'] : '',
         'ExpirationMonth' => str_replace( ' ', '', $cardExpiry[0] ),
         'ExpirationYear' => str_replace( ' ', '', $cardExpiry[1] ),
         'NameOnCard' => $customer_order->billing_first_name,
-      ),
-      'Signature' => $signature,
+      ),*/
+      'Signature' => strtoupper($signature),
     );
     
     // Send this payload to Securo Gateway for processing
@@ -164,48 +155,50 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
       'timeout'   => 90,
       'sslverify' => false,
     ) );
+    
     if ( is_wp_error( $response ) ) 
       throw new Exception( __( 'There is issue for connection payment gateway. Sorry for the inconvenience.', 'cwoa-securo-gateway' ) );
     if ( empty( $response['body'] ) )
       throw new Exception( __( 'Securo Gateway Response was not get any data.', 'cwoa-securo-gateway' ) );
       
     // get body response while get not error
-    $response_body = wp_remote_retrieve_body( $response );
+    $response_body = json_decode(wp_remote_retrieve_body( $response ));
     
-    
-    foreach ( preg_split( "/\r?\n/", $response_body ) as $line ) {
-      $resp = explode( "|", $line );
-    }
-    // values get
-    $r['response_code']             = $resp[0];
-    $r['response_sub_code']         = $resp[1];
-    $r['response_reason_code']      = $resp[2];
-    $r['response_reason_text']      = $resp[3];
-    
-    // 1 or 4 means the transaction was a success
-    if ( ( $r['response_code'] == 1 ) || ( $r['response_code'] == 4 ) ) {
-      // Payment successful
-      $customer_order->add_order_note( __( 'Securo complete payment.', 'cwoa-securo-gateway' ) );
-                         
-      // paid order marked
-      $customer_order->payment_complete();
-      // this is important part for empty cart
-      $woocommerce->cart->empty_cart();
-      // Redirect to thank you page
-      return array(
-        'result'   => 'success',
-        'redirect' => $this->get_return_url( $customer_order ),
-      );
+    if($response_body->errorMessage == "PENDING") {
+        /*// Payment successful
+        $customer_order->add_order_note( __( 'Securo complete payment.', 'cwoa-securo-gateway' ) );
+                             
+        // paid order marked
+        $customer_order->payment_complete();
+        // this is important part for empty cart
+        $woocommerce->cart->empty_cart();*/
+        // Redirect to thank you page
+        
+        $return_url = add_query_arg(
+            array(
+                "returnUrl" => $this->get_return_url( $customer_order ),
+                "notificationUrl" => $this->get_return_url( $customer_order ),
+            ),
+            $response_body->payeerRedirectUrl
+        );
+        
+        return array(
+            'result'   => 'success',
+            "redirect" => $return_url
+            //'redirect' => $this->get_return_url( $customer_order ),
+        );
+
+        $response_body->payeerRedirectUrl;
     } else {
-      //transiction fail
-      wc_add_notice( $r['response_reason_text'], 'error' );
-      $customer_order->add_order_note( 'Error: '. $r['response_reason_text'] );
+        //transaction fail
+        wc_add_notice( $response_body->errorMessage, 'error' );
+        $customer_order->add_order_note( 'Error: '. $response_body->errorMessage );
     }
   }
   
   // Validate fields
   public function validate_fields() {
-    return true;
+    return false;
   }
   public function do_ssl_check() {
     if( $this->enabled == "yes" ) {
