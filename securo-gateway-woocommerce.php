@@ -93,11 +93,19 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
                : 'https://api.securogate.com/api/v1/gateway/transaction/init';
     
     $token = $this->getAuthToken();
+    /*$cardNo = str_replace( array(' ', '-' ), '', $_POST['cwoa_securo_gateway-card-number'] );
+    $cardExpiry = str_replace( ' ', '', $_POST['cwoa_securo_gateway-card-expiry'] );
+    $cardExpiry = explode( '/', $_POST['cwoa_securo_gateway-card-expiry'] );
+    
+    $firstSix = mb_substr($cardNo, 0, 6);
+    $lastFour = mb_substr($cardNo, -4);*/
     
     $itemAmount = (int)$customer_order->order_total;
 
     $signature = strtoupper($this->merchant_id).';'
                 .$customer_order->get_order_number().';;;'
+                //.$firstSix.';'
+                //.$lastFour.';'
                 .($itemAmount*100).';'
                 .'USD'.';'
                 .$this->terminal_key.';'
@@ -105,9 +113,11 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
                 .strtoupper($customer_order->billing_first_name).';'
                 .strtoupper($customer_order->billing_last_name).';'
                 .$this->secret_key;
-    //SHA512(<merchant id>;<order id>;<amount>;<currency>;<key>;<email>;<fname>;<lname>;<secret>)
+    //SHA512(<merchant id>;<order id>;<binn>;<last 4>;<amount>;<currency>;<key>;<email>;<fname>;<lname>;<secret>)
     
+    //$signature = ';;;;;;;;;;';
     $signature = hash("sha512", $signature);
+    
     
     $payload = array (
       'StoreId' => $this->store_id,
@@ -134,14 +144,8 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
         'State' => $customer_order->billing_state,
         'Country' => $customer_order->billing_country,
       ),
-      /*'CardDetails' => array (
-        'Number' => $cardNo,
-        'CVV' => ( isset( $_POST['cwoa_securo_gateway-card-cvc'] ) ) ? $_POST['cwoa_securo_gateway-card-cvc'] : '',
-        'ExpirationMonth' => str_replace( ' ', '', $cardExpiry[0] ),
-        'ExpirationYear' => str_replace( ' ', '', $cardExpiry[1] ),
-        'NameOnCard' => $customer_order->billing_first_name,
-      ),*/
       'Signature' => strtoupper($signature),
+	    'return_url' => $this->get_return_url( $customer_order ),
     );
     
     // Send this payload to Securo Gateway for processing
@@ -165,6 +169,7 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
     $response_body = json_decode(wp_remote_retrieve_body( $response ));
     
     if($response_body->errorMessage == "PENDING") {
+        $customer_order->add_order_note( __( 'Securo inititated payment.', 'cwoa-securo-gateway' ) );
         /*// Payment successful
         $customer_order->add_order_note( __( 'Securo complete payment.', 'cwoa-securo-gateway' ) );
                              
@@ -176,8 +181,8 @@ class cwoa_SECURO_GATEWAY extends WC_Payment_Gateway {
         
         $return_url = add_query_arg(
             array(
-                "returnUrl" => $this->get_return_url( $customer_order ),
-                "notificationUrl" => $this->get_return_url( $customer_order ),
+                "return_url" => $this->get_return_url( $customer_order ),
+                "notification_url" => $this->get_return_url( $customer_order ),
             ),
             $response_body->payeerRedirectUrl
         );
