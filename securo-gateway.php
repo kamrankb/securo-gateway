@@ -28,3 +28,30 @@ function cwoa_securo_gateway_action_links( $links ) {
   );
   return array_merge( $plugin_links, $links );
 }
+
+
+// Add a custom webhook handler function
+add_action('woocommerce_api_securo_payment_notify', 'securo_payment_notify');
+
+function securo_payment_notify($data) {
+    // Get the order ID from the webhook data
+    $order_id = $data['resource_id'];
+    
+    // Get the order object
+    $order = wc_get_order($order_id);
+    
+	if(!empty($data['status']) && ($data['status'] == 'completed')) {
+		// Update payment status
+		$order->update_status('completed', __('Payment received via Securo', 'woocommerce'));
+
+		// Add a note to the order
+		$order->add_order_note(__('Webhook: Payment status updated', 'woocommerce'));
+	} else {
+		// Update payment status
+		$order->update_status('failed', __('Payment failed via Securo', 'woocommerce'));
+
+		// Add a note to the order
+		$order->add_order_note(__('Webhook: Payment status updated', 'woocommerce'));
+	}
+    
+}
